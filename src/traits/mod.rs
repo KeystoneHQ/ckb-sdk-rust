@@ -3,27 +3,12 @@
 
 pub mod default_impls;
 pub mod dummy_impls;
-pub mod light_client_impls;
-pub mod offchain_impls;
 
-pub use default_impls::{
-    DefaultCellCollector, DefaultCellDepResolver, DefaultHeaderDepResolver,
-    DefaultTransactionDependencyProvider, SecpCkbRawKeySigner,
-};
-pub use light_client_impls::{
-    LightClientCellCollector, LightClientHeaderDepResolver,
-    LightClientTransactionDependencyProvider,
-};
-pub use offchain_impls::{
-    OffchainCellCollector, OffchainCellDepResolver, OffchainHeaderDepResolver,
-    OffchainTransactionDependencyProvider,
-};
-
-use dyn_clone::DynClone;
+use alloc::{borrow::ToOwned, string::String};
+pub use default_impls:: SecpCkbRawKeySigner;
 use thiserror::Error;
 
 use ckb_hash::blake2b_256;
-use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
 use ckb_types::{
     bytes::Bytes,
     core::{
@@ -31,14 +16,12 @@ use ckb_types::{
         error::OutPointError,
         HeaderView, TransactionView,
     },
-    packed::{Byte32, CellDep, CellOutput, OutPoint, Script, Transaction},
+    packed::{Byte32, CellDep, CellOutput, OutPoint, Script},
     prelude::*,
 };
 
-use crate::{rpc::ckb_indexer::SearchMode, util::is_mature};
-
 /// Signer errors
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum SignerError {
     #[error("the id is not found in the signer")]
     IdNotFound,
@@ -50,8 +33,8 @@ pub enum SignerError {
     InvalidTransaction(String),
 
     // maybe hardware wallet error or io error
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("SignerError::other: {0}")]
+    Other(anyhow::Error),
 }
 
 /// A signer abstraction, support signer type:
@@ -82,8 +65,8 @@ pub enum TransactionDependencyError {
     #[error("the resource is not found in the provider: `{0}`")]
     NotFound(String),
 
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("TransactionDependencyError, Other:{0}")]
+    Other(anyhow::Error),
 }
 
 /// Provider dependency information of a transaction:
@@ -110,24 +93,7 @@ pub trait TransactionDependencyProvider: Sync + Send {
     ) -> Result<Option<ckb_types::packed::Bytes>, TransactionDependencyError>;
 }
 
-// Implement CellDataProvider trait is currently for `DaoCalculator`
-impl CellDataProvider for &dyn TransactionDependencyProvider {
-    fn get_cell_data(&self, out_point: &OutPoint) -> Option<Bytes> {
-        TransactionDependencyProvider::get_cell_data(*self, out_point).ok()
-    }
-    fn get_cell_data_hash(&self, out_point: &OutPoint) -> Option<Byte32> {
-        TransactionDependencyProvider::get_cell_data(*self, out_point)
-            .ok()
-            .map(|data| blake2b_256(data.as_ref()).pack())
-    }
-}
 
-// Implement CellDataProvider trait is currently for `DaoCalculator`
-impl HeaderProvider for &dyn TransactionDependencyProvider {
-    fn get_header(&self, hash: &Byte32) -> Option<HeaderView> {
-        TransactionDependencyProvider::get_header(*self, hash).ok()
-    }
-}
 impl HeaderChecker for &dyn TransactionDependencyProvider {
     fn check_valid(&self, block_hash: &Byte32) -> Result<(), OutPointError> {
         TransactionDependencyProvider::get_header(*self, block_hash)
@@ -159,22 +125,13 @@ impl CellProvider for &dyn TransactionDependencyProvider {
     }
 }
 
-impl ExtensionProvider for &dyn TransactionDependencyProvider {
-    fn get_block_extension(&self, hash: &Byte32) -> Option<ckb_types::packed::Bytes> {
-        match TransactionDependencyProvider::get_block_extension(*self, hash).ok() {
-            Some(Some(bytes)) => Some(bytes),
-            _ => None,
-        }
-    }
-}
-
 /// Cell collector errors
 #[derive(Error, Debug)]
 pub enum CellCollectorError {
-    #[error(transparent)]
+    #[error("CellCollectorError, Internal:{0}")]
     Internal(anyhow::Error),
 
-    #[error(transparent)]
+    #[error("CellCollectorError, other:{0}")]
     Other(anyhow::Error),
 }
 
@@ -235,180 +192,6 @@ pub enum QueryOrder {
     Asc,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct CellQueryOptions {
-    pub primary_script: Script,
-    pub primary_type: PrimaryScriptType,
-    pub with_data: Option<bool>,
-
-    // Options for SearchKeyFilter
-    pub secondary_script: Option<Script>,
-    pub secondary_script_len_range: Option<ValueRangeOption>,
-    pub data_len_range: Option<ValueRangeOption>,
-    pub capacity_range: Option<ValueRangeOption>,
-    pub block_range: Option<ValueRangeOption>,
-
-    pub order: QueryOrder,
-    pub limit: Option<u32>,
-    /// Filter cell by its maturity
-    pub maturity: MaturityOption,
-    /// Try to collect at least `min_total_capacity` shannons of cells, if
-    /// satisfied will stop collecting. The default value is 1 shannon means
-    /// collect only one cell at most.
-    pub min_total_capacity: u64,
-    pub script_search_mode: Option<SearchMode>,
-}
-impl CellQueryOptions {
-    pub fn new(primary_script: Script, primary_type: PrimaryScriptType) -> CellQueryOptions {
-        CellQueryOptions {
-            primary_script,
-            primary_type,
-            secondary_script: None,
-            secondary_script_len_range: None,
-            data_len_range: None,
-            capacity_range: None,
-            block_range: None,
-            with_data: None,
-            order: QueryOrder::Asc,
-            limit: None,
-            maturity: MaturityOption::Mature,
-            min_total_capacity: 1,
-            script_search_mode: None,
-        }
-    }
-    pub fn new_lock(primary_script: Script) -> CellQueryOptions {
-        CellQueryOptions::new(primary_script, PrimaryScriptType::Lock)
-    }
-    pub fn new_type(primary_script: Script) -> CellQueryOptions {
-        CellQueryOptions::new(primary_script, PrimaryScriptType::Type)
-    }
-    pub fn match_cell(&self, cell: &LiveCell, max_mature_number: u64) -> bool {
-        fn extract_raw_data(script: &Script) -> Vec<u8> {
-            [
-                script.code_hash().as_slice(),
-                script.hash_type().as_slice(),
-                &script.args().raw_data(),
-            ]
-            .concat()
-        }
-        let filter_prefix = self.secondary_script.as_ref().map(|script| {
-            if script != &Script::default() {
-                extract_raw_data(script)
-            } else {
-                Vec::new()
-            }
-        });
-        match self.primary_type {
-            PrimaryScriptType::Lock => {
-                // check primary script
-                if cell.output.lock() != self.primary_script {
-                    return false;
-                }
-
-                // if primary is `lock`, secondary is `type`
-                if let Some(prefix) = filter_prefix {
-                    if prefix.is_empty() {
-                        if cell.output.type_().is_some() {
-                            return false;
-                        }
-                    } else if cell
-                        .output
-                        .type_()
-                        .to_opt()
-                        .as_ref()
-                        .map(extract_raw_data)
-                        .filter(|data| data.starts_with(&prefix))
-                        .is_none()
-                    {
-                        return false;
-                    }
-                }
-            }
-            PrimaryScriptType::Type => {
-                // check primary script
-                if cell.output.type_().to_opt().as_ref() != Some(&self.primary_script) {
-                    return false;
-                }
-
-                // if primary is `type`, secondary is `lock`
-                if let Some(prefix) = filter_prefix {
-                    if !extract_raw_data(&cell.output.lock()).starts_with(&prefix) {
-                        return false;
-                    }
-                }
-            }
-        }
-        if let Some(range) = self.secondary_script_len_range {
-            match self.primary_type {
-                PrimaryScriptType::Lock => {
-                    let script_len = cell
-                        .output
-                        .type_()
-                        .to_opt()
-                        .map(|script| extract_raw_data(&script).len())
-                        .unwrap_or_default();
-                    if !range.match_value(script_len as u64) {
-                        return false;
-                    }
-                }
-                PrimaryScriptType::Type => {
-                    let script_len = extract_raw_data(&cell.output.lock()).len();
-                    if !range.match_value(script_len as u64) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        if let Some(range) = self.data_len_range {
-            if !range.match_value(cell.output_data.len() as u64) {
-                return false;
-            }
-        }
-        if let Some(range) = self.capacity_range {
-            let capacity: u64 = cell.output.capacity().unpack();
-            if !range.match_value(capacity) {
-                return false;
-            }
-        }
-        if let Some(range) = self.block_range {
-            if !range.match_value(cell.block_number) {
-                return false;
-            }
-        }
-        let cell_is_mature = is_mature(cell, max_mature_number);
-        match self.maturity {
-            MaturityOption::Mature => cell_is_mature,
-            MaturityOption::Immature => !cell_is_mature,
-            MaturityOption::Both => true,
-        }
-    }
-}
-pub trait CellCollector: DynClone {
-    /// Collect live cells by query options, if `apply_changes` is true will
-    /// mark all collected cells as dead cells.
-    fn collect_live_cells(
-        &mut self,
-        query: &CellQueryOptions,
-        apply_changes: bool,
-    ) -> Result<(Vec<LiveCell>, u64), CellCollectorError>;
-
-    /// Mark this cell as dead cell
-    fn lock_cell(
-        &mut self,
-        out_point: OutPoint,
-        tip_block_number: u64,
-    ) -> Result<(), CellCollectorError>;
-    /// Mark all inputs as dead cells and outputs as live cells in the transaction.
-    fn apply_tx(
-        &mut self,
-        tx: Transaction,
-        tip_block_number: u64,
-    ) -> Result<(), CellCollectorError>;
-
-    /// Clear cache and locked cells
-    fn reset(&mut self);
-}
 
 pub trait CellDepResolver {
     /// Resolve cell dep by script.
@@ -427,6 +210,7 @@ pub trait HeaderDepResolver {
 // test cases make sure new added exception won't breadk `anyhow!(e_variable)` usage,
 #[cfg(test)]
 mod anyhow_tests {
+    use alloc::string::ToString;
     use anyhow::anyhow;
     #[test]
     fn test_signer_error() {

@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use alloc::{boxed::Box, string::{String, ToString}, vec::Vec};
+use hashbrown::HashSet;
 
 use anyhow::anyhow;
 use ckb_hash::{blake2b_256, new_blake2b};
@@ -28,6 +29,8 @@ use super::{
     IdentityFlag, OmniLockConfig,
 };
 
+
+
 #[derive(Error, Debug)]
 pub enum ScriptSignError {
     #[error("signer error: `{0}`")]
@@ -37,7 +40,7 @@ pub enum ScriptSignError {
     WitnessNotEnough,
 
     #[error("the witness is not empty and not WitnessArgs format: `{0}`")]
-    InvalidWitnessArgs(#[from] VerificationError),
+    InvalidWitnessArgs(String),
 
     #[error("the Omni lock witness lock field is invalid: `{0}`")]
     InvalidOmniLockWitnessLock(String),
@@ -51,9 +54,16 @@ pub enum ScriptSignError {
     #[error("there is an configuration error: `{0}`")]
     InvalidConfig(#[from] ConfigError),
 
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("ScriptSignError::OtherError: `{0}`")]
+    Other(anyhow::Error),
 }
+
+impl  From<VerificationError> for ScriptSignError {
+    fn from(err: VerificationError) -> Self {
+        ScriptSignError::InvalidWitnessArgs(err.to_string())
+    }
+ }
+
 
 /// Script signer logic:
 ///   * Generate message to sign
@@ -171,10 +181,12 @@ impl MultisigConfig {
                 require_first_n, threshold
             )));
         }
+        let cloned = sighash_addresses.clone();
         Ok(MultisigConfig {
-            sighash_addresses,
             require_first_n,
             threshold,
+            sighash_addresses: cloned,
+            
         })
     }
 
@@ -814,6 +826,7 @@ impl ScriptSigner for OmniLockScriptSigner {
 
 #[cfg(test)]
 mod anyhow_tests {
+    use alloc::string::ToString;
     use anyhow::anyhow;
     #[test]
     fn test_script_sign_error() {

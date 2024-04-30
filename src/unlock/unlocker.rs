@@ -1,3 +1,4 @@
+use alloc::{boxed::Box, vec::Vec};
 use anyhow::anyhow;
 use ckb_types::{
     bytes::Bytes,
@@ -38,8 +39,8 @@ pub enum UnlockError {
     #[error("sign context is incorrect")]
     SignContextTypeIncorrect,
 
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("UnlockError::Other::{0}")]
+    Other(anyhow::Error),
 }
 
 /// Script unlock logic:
@@ -295,7 +296,7 @@ fn acp_is_unlocked(
             let input = tx
                 .inputs()
                 .get(*idx)
-                .ok_or_else(|| anyhow!("input index in script group is out of bound: {}", idx))?;
+                .ok_or_else(|| UnlockError::Other(anyhow!("input index in script group is out of bound: {}", idx)))?;
             let output = tx_dep_provider.get_cell(&input.previous_output())?;
             let output_data = tx_dep_provider.get_cell_data(&input.previous_output())?;
 
@@ -334,10 +335,10 @@ fn acp_is_unlocked(
             .get(output_idx)
             .map(|data| data.raw_data())
             .ok_or_else(|| {
-                anyhow!(
+                UnlockError::Other(anyhow!(
                     "output data index in script group is out of bound: {}",
                     output_idx
-                )
+                ))
             })?;
         let type_hash_opt = output
             .type_()
@@ -727,6 +728,7 @@ impl ScriptUnlocker for OmniLockUnlocker {
 }
 #[cfg(test)]
 mod anyhow_tests {
+    use alloc::string::ToString;
     use anyhow::anyhow;
     #[test]
     fn test_unlock_error() {

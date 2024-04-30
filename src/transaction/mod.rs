@@ -1,11 +1,14 @@
+use alloc::{boxed::Box, vec::Vec};
+
 use crate::{tx_builder::TxBuilderError, NetworkInfo};
 
-use self::{builder::FeeCalculator, handler::ScriptHandler};
+use self::{handler::ScriptHandler};
 
 pub mod builder;
 pub mod handler;
 pub mod input;
 pub mod signer;
+pub mod psbt;
 
 pub struct TransactionBuilderConfiguration {
     /// The network for transaction builder.
@@ -75,7 +78,7 @@ impl TransactionBuilderConfiguration {
         self.fee_rate
     }
 
-    pub fn fee_calculator(&self) -> FeeCalculator {
-        FeeCalculator::new(self.fee_rate)
-    }
+    // pub fn fee_calculator(&self) -> FeeCalculator {
+    //     FeeCalculator::new(self.fee_rate)
+    // }
 }

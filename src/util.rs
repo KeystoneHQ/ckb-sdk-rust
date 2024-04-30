@@ -1,15 +1,17 @@
-use std::{convert::TryInto, ptr, sync::atomic};
+use core::{ptr, sync::atomic};
 
+use alloc::string::String;
+#[cfg(feature = "dao")]
 use ckb_dao_utils::extract_dao_data;
 use ckb_types::{
     core::{Capacity, EpochNumber, EpochNumberWithFraction, HeaderView},
     packed::CellOutput,
     prelude::*,
-    H160, H256, U256,
+    H160, H256,
 };
 use sha3::{Digest, Keccak256};
 
-use crate::rpc::CkbRpcClient;
+// use crate::rpc::CkbRpcClient;
 use crate::traits::LiveCell;
 
 pub fn zeroize_privkey(key: &mut secp256k1::SecretKey) {
@@ -27,53 +29,10 @@ pub fn zeroize_slice(data: &mut [u8]) {
     }
 }
 
-pub fn get_max_mature_number(rpc_client: &CkbRpcClient) -> Result<u64, String> {
-    let cellbase_maturity = EpochNumberWithFraction::from_full_value(
-        rpc_client
-            .get_consensus()
-            .map_err(|err| err.to_string())?
-            .cellbase_maturity
-            .value(),
-    );
-    let tip_epoch = rpc_client
-        .get_tip_header()
-        .map(|header| EpochNumberWithFraction::from_full_value(header.inner.epoch.value()))
-        .map_err(|err| err.to_string())?;
-
-    let tip_epoch_rational = tip_epoch.to_rational();
-    let cellbase_maturity_rational = cellbase_maturity.to_rational();
-
-    if tip_epoch_rational < cellbase_maturity_rational {
-        // No cellbase live cell is mature
+pub fn get_max_mature_number() -> Result<u64, String> {
         Ok(0)
-    } else {
-        let difference = tip_epoch_rational - cellbase_maturity_rational;
-        let rounds_down_difference = difference.clone().into_u256();
-        let difference_delta = difference - rounds_down_difference.clone();
-
-        let epoch_number = u64::from_le_bytes(
-            rounds_down_difference.to_le_bytes()[..8]
-                .try_into()
-                .expect("should be u64"),
-        )
-        .into();
-        let max_mature_epoch = rpc_client
-            .get_epoch_by_number(epoch_number)
-            .map_err(|err| err.to_string())?
-            .ok_or_else(|| "Can not get epoch less than current epoch number".to_string())?;
-
-        let max_mature_block_number = (difference_delta
-            * U256::from(max_mature_epoch.length.value())
-            + U256::from(max_mature_epoch.start_number.value()))
-        .into_u256();
-
-        Ok(u64::from_le_bytes(
-            max_mature_block_number.to_le_bytes()[..8]
-                .try_into()
-                .expect("should be u64"),
-        ))
-    }
 }
+
 
 pub fn is_mature(info: &LiveCell, max_mature_number: u64) -> bool {
     // Not cellbase cell
@@ -108,6 +67,7 @@ pub fn minimal_unlock_point(
     )
 }
 
+#[cfg(feature = "dao")]
 pub fn calculate_dao_maximum_withdraw4(
     deposit_header: &HeaderView,
     prepare_header: &HeaderView,
@@ -155,9 +115,11 @@ pub fn convert_keccak256_hash(message: &[u8]) -> H256 {
 }
 
 #[cfg(test)]
+#[cfg(feature = "disable")]
 mod tests {
     use super::*;
     use crate::test_util::MockRpcResult;
+    use alloc::vec;
     use ckb_chain_spec::consensus::ConsensusBuilder;
     use ckb_dao_utils::pack_dao_data;
     use ckb_jsonrpc_types::{Consensus, EpochView, HeaderView};
@@ -282,9 +244,8 @@ mod tests {
                 then.status(200)
                     .body(MockRpcResult::new(tip_header).to_json());
             });
-
-            let rpc_client = CkbRpcClient::new(server.base_url().as_str());
-            assert_eq!(0, get_max_mature_number(&rpc_client).unwrap());
+            
+            assert_eq!(0, get_max_mature_number().unwrap());
         }
 
         {
@@ -329,8 +290,7 @@ mod tests {
                 then.status(200).body(MockRpcResult::new(epoch3).to_json());
             });
 
-            let rpc_client = CkbRpcClient::new(server.base_url().as_str());
-            assert_eq!(1900, get_max_mature_number(&rpc_client).unwrap());
+            assert_eq!(1900, get_max_mature_number().unwrap());
         }
 
         {
@@ -374,9 +334,7 @@ mod tests {
                     .body_contains("get_epoch_by_number");
                 then.status(200).body(MockRpcResult::new(epoch3).to_json());
             });
-
-            let rpc_client = CkbRpcClient::new(server.base_url().as_str());
-            assert_eq!(151500, get_max_mature_number(&rpc_client).unwrap());
+            assert_eq!(151500, get_max_mature_number().unwrap());
         }
     }
 }

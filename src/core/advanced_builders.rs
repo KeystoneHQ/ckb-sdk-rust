@@ -1,5 +1,7 @@
+use alloc::vec::Vec;
+
 use ckb_types::{constants, core, packed, prelude::*};
-use derive_getters::Getters;
+
 
 /// An advanced builder for [`TransactionView`].
 ///
@@ -7,28 +9,54 @@ use derive_getters::Getters;
 ///
 /// [`TransactionView`]: struct.TransactionView.html
 /// [`packed::TransactionBuilder`]: ../packed/struct.TransactionBuilder.html
-#[derive(Clone, Debug, Getters)]
+#[derive(Clone, Debug)]
 pub struct TransactionBuilder {
-    #[getter(skip)]
+    
     pub version: packed::Uint32,
-    #[getter(rename = "get_cell_deps")]
+    
     pub cell_deps: Vec<packed::CellDep>,
-    #[getter(rename = "get_header_deps")]
+    
     pub header_deps: Vec<packed::Byte32>,
-    #[getter(rename = "get_inputs")]
+    
     pub inputs: Vec<packed::CellInput>,
-    #[getter(rename = "get_outputs")]
+    
     pub outputs: Vec<packed::CellOutput>,
-    #[getter(rename = "get_witnesses")]
+    
     pub witnesses: Vec<packed::Bytes>,
-    #[getter(rename = "get_outputs_data")]
+    
     pub outputs_data: Vec<packed::Bytes>,
+}
+
+impl TransactionBuilder {
+    pub fn get_cell_deps(&self) -> &Vec<packed::CellDep> {
+        &self.cell_deps
+    }
+    
+    pub fn get_header_deps(&self) -> &Vec<packed::Byte32> {
+        &self.header_deps
+    }
+
+    pub fn get_inputs(&self) -> &Vec<packed::CellInput> {
+        &self.inputs
+    }
+
+    pub fn get_outputs(&self) -> &Vec<packed::CellOutput> {
+        &self.outputs
+    }
+
+    pub fn get_witnesses(&self) -> &Vec<packed::Bytes> {
+        &self.witnesses
+    }
+
+    pub fn get_outputs_data(&self) -> &Vec<packed::Bytes> {
+        &self.outputs_data
+    }
 }
 
 /*
  * Implement std traits.
  */
-impl ::std::default::Default for TransactionBuilder {
+impl ::core::default::Default for TransactionBuilder {
     fn default() -> Self {
         Self {
             version: constants::TX_VERSION.pack(),
@@ -90,7 +118,7 @@ macro_rules! def_setter_for_vector {
         #[doc = $comment_extend]
         pub fn $func_extend<T>(&mut self, v: T) -> &mut Self
         where
-            T: ::std::iter::IntoIterator<Item = $prefix::$type>,
+            T: ::core::iter::IntoIterator<Item = $prefix::$type>,
         {
             self.$field.extend(v);
             self
@@ -147,7 +175,7 @@ macro_rules! def_dedup_setter_for_vector {
         #[doc = $comment_extend]
         pub fn $func_extend<T>(&mut self, v: T) -> &mut Self
         where
-            T: ::std::iter::IntoIterator<Item = $prefix::$type>,
+            T: ::core::iter::IntoIterator<Item = $prefix::$type>,
         {
             v.into_iter().for_each(|item| {
                 if !self.$field.contains(&item) {
@@ -250,3 +278,29 @@ impl TransactionBuilder {
         tx.into_view()
     }
 }
+
+
+pub fn convert_transaction_builder(tx: packed::Transaction) -> TransactionBuilder {
+    return TransactionBuilder::default()
+    .version(tx.raw().version())
+    .cell_deps(tx.raw().cell_deps())
+    .header_deps(tx.raw().header_deps())
+    .inputs(tx.raw().inputs())
+    .outputs(tx.raw().outputs())
+    .outputs_data(tx.raw().outputs_data())
+    .witnesses(tx.witnesses()).clone();
+}
+
+// impl AsTransactionBuilder for packed::Transaction {
+//     /// Creates an advanced builder base on current data.
+//     fn as_advanced_builder(&self) -> TransactionBuilder {
+//         TransactionBuilder::default()
+//             .version(self.raw().version())
+//             .cell_deps(self.raw().cell_deps())
+//             .header_deps(self.raw().header_deps())
+//             .inputs(self.raw().inputs())
+//             .outputs(self.raw().outputs())
+//             .outputs_data(self.raw().outputs_data())
+//             .witnesses(self.witnesses())
+//     }
+// }
